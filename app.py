@@ -915,48 +915,75 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # ── 로컬/원격 접속 감지 ────────────────────────────
-    is_remote = True  # Cloud 모드: 항상 파일 업로드 방식
+    # ── GitHub 자동 로드 + ERP 업로드 ─────────────────
+    GITHUB_RAW = "https://raw.githubusercontent.com/ohsungait-droid/ohsung-auto/main/%EC%98%A4%EC%84%B1%EC%A0%84%EC%9E%90%EC%84%B8%EA%B8%88%EC%97%85%EB%A1%9C%EB%93%9C.xlsm"
+    GITHUB_HT_PATH = "/tmp/_github_ht.xlsm"
 
-    # ── 경로 설정 ──────────────────────────────────────
-    st.markdown("<div class='section-label'>📂 경로 설정</div>", unsafe_allow_html=True)
+    if not st.session_state.get("github_ht_loaded"):
+        try:
+            import urllib.request
+            with st.spinner("☁️ GitHub에서 홈택스/마스터 파일 로드 중..."):
+                urllib.request.urlretrieve(GITHUB_RAW, GITHUB_HT_PATH)
+                st.session_state.ht_file = GITHUB_HT_PATH
+                db = load_master(GITHUB_HT_PATH)
+                st.session_state.master_db     = db
+                st.session_state.master_loaded = True
+                try:
+                    _wb2 = load_workbook(GITHUB_HT_PATH, read_only=True, keep_vba=True)
+                    if "마스터시트" in _wb2.sheetnames:
+                        _rows2 = list(_wb2["마스터시트"].iter_rows(values_only=True))
+                        _wb2.close()
+                        if len(_rows2) > 1:
+                            _cols2 = [str(c) if c else f"col{i}" for i,c in enumerate(_rows2[0])]
+                            _mdf2  = pd.DataFrame(_rows2[1:], columns=_cols2)
+                            _mdf2  = load_client_master(_mdf2)
+                            st.session_state.client_master_df     = _mdf2
+                            st.session_state.client_master_loaded = True
+                except Exception:
+                    pass
+                st.session_state.github_ht_loaded = True
+        except Exception as e:
+            st.warning(f"⚠️ GitHub 자동 로드 실패: {e}")
 
-    if is_remote:
-        # ── 원격 PC: 파일 업로드 방식 ─────────────────
-        st.caption("🌐 원격 접속 모드 — 파일을 직접 업로드하세요")
-
-        # 저장 폴더는 메인 PC 기준이므로 경로만 표시
-        st.info("☁️ Cloud 모드: 생성된 파일은 아래 다운로드 버튼으로 저장하세요.")
-
-        st.markdown("**홈택스 파일 (.xlsm)**")
+    if st.session_state.get("github_ht_loaded"):
+        st.success(f"✅ 홈택스/마스터: GitHub 자동 로드 ({len(st.session_state.master_db)}개 거래처)")
+        if st.button("🔄 파일 새로 고침", use_container_width=True):
+            st.session_state.github_ht_loaded = False
+            st.session_state.master_loaded    = False
+            st.rerun()
+    else:
+        st.markdown("**홈택스 파일 수동 업로드**")
         ht_upload = st.file_uploader("홈택스", type=["xlsm","xlsx"],
                                       key="ht_upload", label_visibility="collapsed")
         if ht_upload:
             _tmp_ht = "/tmp/_ht_upload.xlsm"
-            os.makedirs("/tmp", exist_ok=True)
             with open(_tmp_ht,"wb") as f: f.write(ht_upload.read())
             st.session_state.ht_file = _tmp_ht
-            st.success(f"✅ {ht_upload.name} 업로드됨")
+            db = load_master(_tmp_ht)
+            st.session_state.master_db     = db
+            st.session_state.master_loaded = True
+            st.session_state.github_ht_loaded = True
+            st.success(f"✅ {ht_upload.name} — {len(db)}개 거래처")
 
-        st.markdown("**ERP 데이터 파일 (.xlsx)**")
-        erp_upload = st.file_uploader("ERP", type=["xlsx"],
-                                       key="erp_upload", label_visibility="collapsed")
-        if erp_upload:
-            _tmp_erp = "/tmp/_erp_upload.xlsx"
-            os.makedirs("/tmp", exist_ok=True)
-            with open(_tmp_erp,"wb") as f: f.write(erp_upload.read())
-            st.session_state.erp_file = _tmp_erp
-            st.success(f"✅ {erp_upload.name} 업로드됨")
+    st.markdown("---")
+    st.markdown("<div class='section-label'>📊 ERP 파일 업로드</div>", unsafe_allow_html=True)
+    st.caption("매달 ERP 파일만 업로드하세요")
 
-        st.markdown("**거래처 마스터 시트 (.xlsx)**")
+    erp_upload = st.file_uploader("ERP 데이터 (.xlsx)", type=["xlsx"],
+                                   key="erp_upload", label_visibility="collapsed")
+    if erp_upload:
+        _tmp_erp = "/tmp/_erp_upload.xlsx"
+        with open(_tmp_erp,"wb") as f: f.write(erp_upload.read())
+        st.session_state.erp_file = _tmp_erp
+        st.success(f"✅ {erp_upload.name} 업로드됨")
+
+    with st.expander("🗂️ 거래처 마스터 시트 별도 업로드 (선택)"):
+        st.caption("홈택스 파일에 마스터시트가 없을 때만 사용")
         cm_upload = st.file_uploader("마스터", type=["xlsx"],
                                       key="cm_upload", label_visibility="collapsed")
         if cm_upload:
             _tmp_cm = "/tmp/_cm_upload.xlsx"
-            os.makedirs("/tmp", exist_ok=True)
             with open(_tmp_cm,"wb") as f: f.write(cm_upload.read())
-            st.session_state.client_master_path = _tmp_cm
-            # 즉시 로드
             try:
                 _raw = pd.read_excel(_tmp_cm)
                 _mdf = load_client_master(_raw)
@@ -965,40 +992,6 @@ with st.sidebar:
                 st.success(f"✅ {cm_upload.name} — {len(_mdf)}개 거래처")
             except Exception as _e:
                 st.error(f"❌ 마스터 로드 실패: {_e}")
-
-    else:
-        # ── 로컬 PC: 경로 + 탐색기 방식 (기존) ────────
-        st.caption("🖥️ 로컬 접속 모드 — 경로 입력 또는 버튼으로 선택")
-
-        def path_row(label, sess_key, is_file=False, ftypes=None):
-            st.markdown(f"**{label}**")
-            c1, c2 = st.columns([5, 1])
-            with c1:
-                val = st.text_input(f"_{sess_key}", value=st.session_state[sess_key],
-                                    label_visibility="collapsed",
-                                    placeholder="경로 입력 또는 버튼 클릭")
-                st.session_state[sess_key] = val
-            with c2:
-                if is_file:
-                    if st.button("📄", key=f"btn_{sess_key}", help="파일 선택"):
-                        pick_file(sess_key, ftypes or [("Excel","*.xlsx *.xlsm"),("All","*.*")])
-                        st.rerun()
-                else:
-                    if st.button("📁", key=f"btn_{sess_key}", help="폴더 선택"):
-                        pick_folder(sess_key)
-                        st.rerun()
-
-        path_row("작업 폴더", "work_dir")
-        path_row("홈택스 파일 (.xlsm)", "ht_file", is_file=True,
-                 ftypes=[("xlsm/xlsx","*.xlsm *.xlsx")])
-        path_row("ERP 파일 (.xlsx)", "erp_file", is_file=True,
-                 ftypes=[("xlsx","*.xlsx")])
-        path_row("거래처 마스터 시트 (.xlsx)", "client_master_path", is_file=True,
-                 ftypes=[("xlsx","*.xlsx")])
-        path_row("저장 폴더", "out_dir")
-
-        if st.session_state.work_dir and not st.session_state.out_dir:
-            st.session_state.out_dir = os.path.join(st.session_state.work_dir, "output")
 
     st.markdown("---")
 
